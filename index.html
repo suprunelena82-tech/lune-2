@@ -36,6 +36,11 @@ input{
   border:1.5px solid var(--line); border-radius:10px; padding:12px 14px; outline:none;
   transition:border-color .15s, box-shadow .15s; min-height:46px;
 }
+input{display:block; min-width:0; max-width:100%; -webkit-appearance:none; appearance:none}
+/* iOS Safari: поле дати інакше розтягується за межі контейнера */
+input[type="date"]{text-align:left; line-height:normal; height:46px}
+input[type="date"]::-webkit-date-and-time-value{text-align:left; margin:0; min-height:1.2em}
+input[type="date"]::-webkit-datetime-edit{padding:0}
 input:focus{border-color:var(--gold); box-shadow:0 0 0 3px rgba(159,115,40,.18)}
 input[aria-invalid="true"]{border-color:var(--bad); box-shadow:0 0 0 3px rgba(179,52,31,.12)}
 .hint{font-size:12px; color:var(--muted); margin:6px 0 0; line-height:1.4}
