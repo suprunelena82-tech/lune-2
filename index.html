@@ -384,7 +384,10 @@ function saveBytes(bytes, name) {
   var a = document.createElement('a');
   a.href = url; a.download = name; a.rel = 'noopener'; a.style.display = 'none';
   document.body.appendChild(a); a.click();
-  setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 15000);
+  /* на телефонах збереження може тривати довше за 15 с — не відкликаємо посилання одразу */
+  setTimeout(function () { if (a.parentNode) a.parentNode.removeChild(a); }, 15000);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 10 * 60 * 1000);
+  return url;
 }
 
 $('form').addEventListener('submit', async function (ev) {
@@ -406,8 +409,14 @@ $('form').addEventListener('submit', async function (ev) {
     fontWarn.classList.remove('show');
     var s = { amountText: res.amount.text, amountNum: res.amount.value, number: res.number.value, dateText: res.date.text };
     var bytes = await buildPdf(s, res.link.value);
-    saveBytes(bytes, fileName(s));
+    var pdfName = fileName(s), pdfUrl = saveBytes(bytes, pdfName);
     setStatus('Готово: PDF завантажується на ваш пристрій.', 'ok');
+    /* запасний варіант: справжнє натискання користувача працює і там, де автозавантаження блокується (Safari, вбудовані браузери) */
+    var fb = document.createElement('a');
+    fb.href = pdfUrl; fb.download = pdfName; fb.target = '_blank'; fb.rel = 'noopener';
+    fb.textContent = 'Якщо файл не з’явився — натисніть тут';
+    fb.style.color = 'inherit'; fb.style.textDecoration = 'underline'; fb.style.display = 'block'; fb.style.marginTop = '6px';
+    statusEl.appendChild(fb);
   } catch (e) {
     setStatus('Не вдалося створити PDF: ' + (e && e.message ? e.message : e), 'bad');
   } finally {
