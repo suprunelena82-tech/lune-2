@@ -96,6 +96,12 @@ button.mini:disabled{opacity:.65; cursor:progress}
     <p class="brand">BEAUTY STORE</p>
     <h1 id="ttl">Генератор подарункових сертифікатів</h1>
 
+    <div id="inapp" class="fontwarn" role="alert" hidden>
+      Ви відкрили сторінку у вбудованому браузері (Telegram, Instagram тощо) — в ньому завантаження PDF може не працювати.
+      Відкрийте її в <b>Safari</b> або <b>Chrome</b>: натисніть «⋯» і виберіть «Відкрити в браузері», або скопіюйте посилання.
+      <div class="btnrow"><button type="button" class="mini" id="inapp-copy">Скопіювати посилання</button></div>
+    </div>
+
     <div id="fontwarn" class="fontwarn" role="alert">
       Не вдалося завантажити шрифт Montserrat. Для коректного вигляду сертифіката потрібне інтернет-з’єднання —
       перевірте його й оновіть сторінку. Поки шрифт не завантажено, PDF не створюється.
@@ -760,6 +766,21 @@ loadFonts().then(function () {
   redraw();
 });
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { redraw(); });
+/* Вбудовані браузери (Telegram, Instagram тощо) блокують завантаження файлів — підказуємо відкрити у Safari/Chrome */
+(function () {
+  var ua = navigator.userAgent || '';
+  var inApp = /FBAN|FBAV|Instagram|Telegram|TikTok|Snapchat|Line\/|MicroMessenger/i.test(ua) ||
+              (/iPhone|iPad|iPod/.test(ua) && !/Safari\//.test(ua)) ||
+              (/Android/.test(ua) && /; wv\)/.test(ua));
+  if (!inApp) return;
+  $('inapp').hidden = false; $('inapp').classList.add('show');
+  $('inapp-copy').addEventListener('click', function () {
+    var url = location.href, btn = this;
+    function done(ok) { btn.textContent = ok ? 'Посилання скопійовано' : 'Не вдалося — виділіть і скопіюйте адресу вручну'; }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(function () { done(true); }, function () { done(false); });
+    else { try { var t = document.createElement('textarea'); t.value = url; document.body.appendChild(t); t.select(); done(document.execCommand('copy')); document.body.removeChild(t); } catch (e) { done(false); } }
+  });
+})();
 initCloud();
 })();
 </script>
