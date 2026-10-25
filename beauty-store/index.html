@@ -169,6 +169,15 @@ button.mini:disabled{opacity:.65; cursor:progress}
       <input type="file" id="bk-file" accept="application/json,.json" hidden>
       <p class="status" id="bk-status" role="status" aria-live="polite"></p>
     </div>
+
+    <div class="sync" id="reset">
+      <h2>Нумерація</h2>
+      <p class="hint">Скидання стирає список використаних номерів на всіх пристроях магазину. Зберіть копію номерів перед цим.</p>
+      <input id="rs-start" type="text" inputmode="numeric" value="1" aria-label="Почати нумерацію з номера" placeholder="1">
+      <p class="hint">Почати з номера (наприклад, 1 або 100).</p>
+      <div class="btnrow"><button type="button" class="mini" id="rs-btn">Скинути нумерацію</button></div>
+      <p class="status" id="rs-status" role="status" aria-live="polite"></p>
+    </div>
   </section>
 
   <section class="preview" aria-label="Попередній перегляд сертифіката">
@@ -372,10 +381,18 @@ function uniq(arr) {
   (arr || []).forEach(function (v) { v = normNum(v); if (v && !seen[v]) { seen[v] = 1; out.push(v); } });
   return out;
 }
+/* Скидання нумерації: «епоха» (resetAt). Новіша епоха перемагає, тож старі номери з іншого пристрою не повертаються. */
+function mergeIssued(a, b) {
+  var ar = +a.resetAt || 0, br = +b.resetAt || 0;
+  if (br > ar) return { issued: uniq(b.issued), resetAt: br, startFrom: +b.startFrom || 1 };
+  if (br < ar) return { issued: uniq(a.issued), resetAt: ar, startFrom: +a.startFrom || 1 };
+  return { issued: uniq((a.issued || []).concat(b.issued || [])), resetAt: ar, startFrom: +a.startFrom || +b.startFrom || 1 };
+}
 function cleanData(o) {
   o = o && typeof o === 'object' ? o : {};
   return {
     issued: uniq(Array.isArray(o.issued) ? o.issued : []),
+    startFrom: Math.max(1, Math.min(9999999, Math.floor(+o.startFrom) || 1)), resetAt: +o.resetAt || 0,
     lastDate: typeof o.lastDate === 'string' ? o.lastDate : '', dateAt: +o.dateAt || 0,
     defaultLink: typeof o.defaultLink === 'string' ? o.defaultLink : '', linkAt: +o.linkAt || 0,
     shopName: typeof o.shopName === 'string' ? o.shopName : '', nameAt: +o.nameAt || 0
@@ -387,7 +404,7 @@ function isUsed(n) { return data.issued.indexOf(normNum(n)) >= 0; }
 function nextNumber(issued) {
   var max = 0;
   (issued || []).forEach(function (v) { if (/^\d{1,10}$/.test(v)) { var n = parseInt(v, 10); if (n > max) max = n; } });
-  var n = max + 1, s;
+  var n = Math.max(max + 1, (data && data.startFrom) || 1), s;
   do { s = String(n); while (s.length < 4) s = '0' + s; n++; } while ((issued || []).indexOf(s) >= 0);
   return s;
 }
@@ -444,23 +461,25 @@ async function transact(addNum) {
   await cloud.api.runTransaction(cloud.db, async function (tx) {
     var snap = await tx.get(ref), rd = snap.exists() ? (snap.data() || {}) : {};
     var remoteIssued = uniq(Array.isArray(rd.issued) ? rd.issued : []);
-    var merged = uniq(remoteIssued.concat(data.issued));
-    if (addNum && remoteIssued.indexOf(addNum) >= 0) { result = { dup: true, issued: merged, meta: null }; return; }
+    var mg = mergeIssued(data, { issued: remoteIssued, resetAt: +rd.resetAt || 0, startFrom: Math.floor(+rd.startFrom) || 1 });
+    var merged = mg.issued;
+    if (addNum && merged.indexOf(addNum) >= 0) { result = { dup: true, issued: merged, meta: null, reset: { resetAt: mg.resetAt, startFrom: mg.startFrom } }; return; }
     if (addNum) merged.push(addNum);
     var m = { lastDate: data.lastDate, dateAt: data.dateAt, defaultLink: data.defaultLink, linkAt: data.linkAt, shopName: data.shopName, nameAt: data.nameAt };
     if ((+rd.dateAt || 0) > m.dateAt && typeof rd.lastDate === 'string') { m.lastDate = rd.lastDate; m.dateAt = +rd.dateAt; }
     if ((+rd.linkAt || 0) > m.linkAt && typeof rd.defaultLink === 'string') { m.defaultLink = rd.defaultLink; m.linkAt = +rd.linkAt; }
     if ((+rd.nameAt || 0) > m.nameAt && typeof rd.shopName === 'string') { m.shopName = rd.shopName; m.nameAt = +rd.nameAt; }
-    var changed = !snap.exists() || merged.length !== remoteIssued.length || rd.lastDate !== m.lastDate ||
+    var changed = !snap.exists() || merged.join('|') !== remoteIssued.join('|') || (+rd.resetAt || 0) !== mg.resetAt || (Math.floor(+rd.startFrom) || 1) !== mg.startFrom || rd.lastDate !== m.lastDate ||
       (+rd.dateAt || 0) !== m.dateAt || rd.defaultLink !== m.defaultLink || (+rd.linkAt || 0) !== m.linkAt ||
       rd.shopName !== m.shopName || (+rd.nameAt || 0) !== m.nameAt;
-    if (changed) tx.set(ref, { issued: merged, lastDate: m.lastDate, dateAt: m.dateAt, defaultLink: m.defaultLink, linkAt: m.linkAt, shopName: m.shopName, nameAt: m.nameAt }, { merge: true });
-    result = { dup: false, issued: merged, meta: m };
+    if (changed) tx.set(ref, { issued: merged, resetAt: mg.resetAt, startFrom: mg.startFrom, lastDate: m.lastDate, dateAt: m.dateAt, defaultLink: m.defaultLink, linkAt: m.linkAt, shopName: m.shopName, nameAt: m.nameAt }, { merge: true });
+    result = { dup: false, issued: merged, meta: m, reset: { resetAt: mg.resetAt, startFrom: mg.startFrom } };
   });
   return result;
 }
 function applyMerged(r) {
   data.issued = r.issued;
+  if (r.reset) { data.resetAt = r.reset.resetAt; data.startFrom = r.reset.startFrom; }
   if (r.meta) { data.lastDate = r.meta.lastDate; data.dateAt = r.meta.dateAt; data.defaultLink = r.meta.defaultLink; data.linkAt = r.meta.linkAt; data.shopName = r.meta.shopName; data.nameAt = r.meta.nameAt; }
   persistLocal();
 }
@@ -509,7 +528,7 @@ function switchBucket(nb) {
   if (nb !== 'local') {
     var loc = readBucket('local');
     if (loc.issued.length || loc.lastDate || loc.defaultLink || loc.shopName) {
-      data.issued = uniq(data.issued.concat(loc.issued));
+      var mgl = mergeIssued(data, loc); data.issued = mgl.issued; data.resetAt = mgl.resetAt; data.startFrom = mgl.startFrom;
       if (loc.dateAt > data.dateAt) { data.lastDate = loc.lastDate; data.dateAt = loc.dateAt; }
       if (loc.linkAt > data.linkAt) { data.defaultLink = loc.defaultLink; data.linkAt = loc.linkAt; }
       if (loc.nameAt > data.nameAt) { data.shopName = loc.shopName; data.nameAt = loc.nameAt; }
@@ -842,8 +861,9 @@ function importBackup(text) {
   var src = cleanData(o.data);
   var valid = src.issued.filter(function (v) { return /^[0-9A-ZА-ЯІЇЄҐ\-\/]{1,10}$/.test(v); }).slice(0, 100000);
   var before = data.issued.length;
-  data.issued = uniq(data.issued.concat(valid));            /* номери лише додаються — повторів не буде */
-  var added = data.issued.length - before;
+  var mgi = mergeIssued(data, { issued: valid, resetAt: src.resetAt, startFrom: src.startFrom });   /* номери додаються; новіше скидання перемагає */
+  data.issued = mgi.issued; data.resetAt = mgi.resetAt; data.startFrom = mgi.startFrom;
+  var added = Math.max(0, data.issued.length - before);
   if (src.dateAt > data.dateAt && validISO(src.lastDate)) { data.lastDate = src.lastDate; data.dateAt = src.dateAt; }
   if (src.linkAt > data.linkAt && /^https?:\/\//i.test(src.defaultLink)) { data.defaultLink = src.defaultLink; data.linkAt = src.linkAt; }
   if ('shopName' in data && typeof vName === 'function' && src.nameAt > data.nameAt && vName(src.shopName).ok) { data.shopName = src.shopName; data.nameAt = src.nameAt; }
@@ -851,6 +871,36 @@ function importBackup(text) {
   if (cloud.user) syncNow();
   bkStatus('Відновлено. Додано номерів: ' + added + ' (усього ' + data.issued.length + '). Наступний номер — ' + nextNumber(data.issued) + '.', 'ok');
 }
+
+/* ======================= Скидання нумерації ======================= */
+var rsArmed = false, rsTimer = 0;
+function rsStatus(msg, kind) { var e = $('rs-status'); e.textContent = msg || ''; e.className = 'status' + (kind ? ' ' + kind : ''); }
+function rsDisarm() { rsArmed = false; clearTimeout(rsTimer); $('rs-btn').textContent = 'Скинути нумерацію'; }
+function parseStart(raw) {
+  var v = String(raw).replace(/[\s\u00A0]/g, '');
+  if (!v) return { ok: true, value: 1 };
+  if (!/^\d{1,7}$/.test(v) || +v < 1) return { ok: false, error: 'Початковий номер має бути цілим числом від 1 до 9999999.' };
+  return { ok: true, value: +v };
+}
+$('rs-btn').addEventListener('click', async function () {
+  var r = parseStart($('rs-start').value);
+  if (!r.ok) { rsDisarm(); rsStatus(r.error, 'bad'); return; }
+  if (!rsArmed) {
+    rsArmed = true; this.textContent = 'Підтвердити скидання';
+    rsStatus('Усі використані номери буде стерто. Краще спершу зберегти копію номерів. Натисніть кнопку ще раз протягом 8 секунд.', 'bad');
+    rsTimer = setTimeout(function () { rsDisarm(); rsStatus(''); }, 8000);
+    return;
+  }
+  rsDisarm();
+  data.issued = []; data.startFrom = r.value; data.resetAt = Date.now();
+  persistLocal(); touched.number = false; refreshFromData();
+  var msg = 'Нумерацію скинуто. Наступний номер — ' + nextNumber(data.issued) + '.';
+  if (cloud.user) {
+    var res = await syncNow();
+    if (!res) { rsStatus(msg + ' Хмара недоступна: на інших пристроях скидання з’явиться після відновлення зв’язку.', 'bad'); return; }
+  }
+  rsStatus(msg, 'ok');
+});
 
 /* Вбудовані браузери (Telegram, Instagram тощо) блокують завантаження файлів — підказуємо відкрити у Safari/Chrome */
 (function () {
