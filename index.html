@@ -732,12 +732,15 @@ $('form').addEventListener('submit', async function (ev) {
       setStatus('Номер № ' + res.number.value + ' уже використано (можливо, на іншому пристрої). Наступний вільний — ' + cm.next + '. Номер у полі оновлено — натисніть кнопку ще раз.', 'bad');
       return;
     }
-    var pdfName = fileName(s), pdfFile = null, shareOk = false, pdfUrl;
+    var pdfName = fileName(s), pdfFile = null, shareOk = false, canShareFile = false, pdfUrl;
     /* У вбудованих браузерах (Telegram тощо) автозавантаження губить ім'я файлу — пропонуємо «Поділитися/Зберегти» */
     try {
       pdfFile = new File([bytes], pdfName, { type: 'application/pdf' });
-      shareOk = IN_APP && !!(navigator.canShare && navigator.canShare({ files: [pdfFile] }) && navigator.share);
-    } catch (e) { shareOk = false; }
+      canShareFile = !!(navigator.canShare && navigator.canShare({ files: [pdfFile] }) && navigator.share);
+      shareOk = IN_APP && canShareFile;
+    } catch (e) { shareOk = false; canShareFile = false; }
+    /* на iPhone кнопку «Зберегти PDF» показуємо завжди: не всі вбудовані браузери вдається розпізнати */
+    var extraShare = !shareOk && canShareFile && /iPhone|iPad|iPod/.test(navigator.userAgent || '');
     pdfUrl = shareOk ? URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })) : saveBytes(bytes, pdfName);
     var nxt = nextNumber(data.issued);
     els.number.value = nxt; touched.number = false; applyField('number');
@@ -749,9 +752,9 @@ $('form').addEventListener('submit', async function (ev) {
     fb.textContent = 'Якщо файл не з’явився — натисніть тут';
     fb.style.color = 'inherit'; fb.style.textDecoration = 'underline'; fb.style.display = 'block'; fb.style.marginTop = '6px';
     statusEl.appendChild(fb);
-    if (shareOk) {
+    if (shareOk || extraShare) {
       var sb = document.createElement('button');
-      sb.type = 'button'; sb.className = 'mini'; sb.textContent = 'Зберегти PDF'; sb.style.marginTop = '8px';
+      sb.type = 'button'; sb.className = 'mini'; sb.textContent = extraShare ? 'Зберегти PDF із правильною назвою' : 'Зберегти PDF'; sb.style.marginTop = '8px';
       sb.addEventListener('click', function () {
         navigator.share({ files: [pdfFile], title: pdfName }).catch(function (err) {
           if (err && err.name === 'AbortError') return;
